@@ -66,7 +66,7 @@ __global__ void gpuWork(double *data, double *buffer, const std::size_t size,
 	auto idx = threadIdx.x + blockIdx.x * blockDim.x;
 
 	for (auto i = 0.0; i < maxTime; i += stepT) {
-		buffer[size - 1] = data[size - 1] + 5.0;
+		buffer[size - 1] = 5.0;
 
 		if (idx < size - 1 && idx > 0)
 			buffer[idx] = ((data[idx + 1] - 2.0 * data[idx] + data[idx - 1]) * stepT / (stepX * stepX)) + data[idx];
@@ -85,7 +85,7 @@ __global__ void gpuWorkOptimized(double * __restrict__ data, double * __restrict
 	for (auto i = 0.0; i < maxTime; i += stepT) {
 		auto idx = threadIdx.x + blockIdx.x * blockDim.x;
 
-		buffer[size - 1] = data[size - 1] + 5.0;
+		buffer[size - 1] = 5.0;
 
 		if (idx < size - 1 && idx > 0)
 			buffer[idx] = ((data[idx + 1] - 2.0 * data[idx] + data[idx - 1]) * stepT / (stepX * stepX)) + data[idx];
@@ -108,7 +108,7 @@ void cpuWork(double *data, double *buffer, const std::size_t size,
 		     const double stepX, const double stepT, const double maxTime) {
 #pragma omp for
 	for (auto i = 0.0; i < maxTime; i += stepT) {
-		buffer[size - 1] = data[size - 1] + 5.0;
+		buffer[size - 1] = 5.0;
 #pragma omp for
 		for (auto i = 1; i < size - 1; i++)
 			buffer[i] = ((data[i + 1] - 2.0 * data[i] + data[i - 1]) * stepT / (stepX * stepX)) + data[i];
@@ -118,7 +118,7 @@ void cpuWork(double *data, double *buffer, const std::size_t size,
 }
 
 /*
- * Helpers
+ * Init
  */
 
 int init(std::size_t size) {
@@ -137,6 +137,18 @@ int init(std::size_t size) {
 	std::memset((void *)::hostBuffer, 0, size);
 
 	return 0;
+}
+
+/*
+ * Print
+ */
+
+void consolePrint(const double *result, std::size_t size, double stepX) {
+	auto x = 0.0;
+	for (auto i = 0; i < size; i++) {
+		std::cout << std::setw(6) << std::left << x << std::right << result[i] << std::endl;
+		x += stepX;
+	}
 }
 
 int gnuplotPrint(const double *result, std::size_t size, double stepX) {
@@ -205,7 +217,7 @@ int filePrint(const char *filename, const double *result, const std::size_t size
 
 int main() {
 	const size_t length = LENGTH;
-	const double time = TIME;
+	const double time   = TIME;
 
 	const double stepX = STEP_X; // Length (x coord) increment
 	const double stepT = STEP_T; // Time increment
@@ -221,29 +233,13 @@ int main() {
 	cudaCheck(cudaMemcpy(devData, hostData, size, cudaMemcpyHostToDevice));
 	cudaCheck(cudaMemcpy(devBuffer, hostBuffer, size, cudaMemcpyHostToDevice));
 
-	//timers
-
-	float timeCPU, timeGPU, timeGPUOpt;
-	cudaEvent_t start, stop;
-
 	/*
 	 * CPU text
 	 */
 
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-
 	auto beginTime = std::chrono::steady_clock::now();
-	cudaEventRecord(start, 0);
 	cpuWork(hostData, hostBuffer, nPoints, stepX, stepT, time);
 	auto chronoTimeCPU = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - beginTime).count();
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-
-	cudaEventElapsedTime(&timeCPU, start, stop);
-
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
 
 	if (filePrint("cpu_plot.txt", hostData, nPoints, stepX)) {
 		_free();
@@ -261,20 +257,9 @@ int main() {
 	 * Default kernel function
 	 */
 
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-
 	beginTime = std::chrono::steady_clock::now();
-	cudaEventRecord(start, 0);
 	gpuWork <<<nBlocks, nThreads>>> (devData, devBuffer, nPoints, stepX, stepT, time);
 	auto chronoTimeGPU = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - beginTime).count();
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-
-	cudaEventElapsedTime(&timeGPU, start, stop);
-
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
 
 	// Result to array
 	cudaCheck(cudaMemcpy(hostData, devData, size, cudaMemcpyDeviceToHost));
@@ -285,27 +270,15 @@ int main() {
 
 	cudaFuncSetCacheConfig(gpuWorkOptimized, cudaFuncCachePreferL1);
 
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-
 	beginTime = std::chrono::steady_clock::now();
-	cudaEventRecord(start, 0);
 	gpuWorkOptimized <<<nBlocks, nThreads>>> (devData, devBuffer, nPoints, stepX, stepT, time);
 	auto chronoTimeGPUOp = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - beginTime).count();
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-
-	cudaEventElapsedTime(&timeGPUOpt, start, stop);
-
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
 
 	/*
 	 * Output
 	 */
 	
-	for (auto i = 0; i < nPoints; i++)
-		std::cout << hostData[i] << " ";
+	consolePrint(hostData, nPoints, stepX);
 
 	std::cout << std::endl << std::endl;
 
@@ -319,9 +292,9 @@ int main() {
 		return 1;
 	}
 
-	std::cout << std::setw(20) << std::left << "CPU time "			 << timeCPU	   << "(" << chronoTimeCPU   << " us by chrono) ms" << std::endl;
-	std::cout << std::setw(20) << std::left << "GPU time "			 << timeGPU	   << "(" << chronoTimeGPU   << " us by chrono) ms" << std::endl;
-	std::cout << std::setw(20) << std::left << "GPU optimized time " << timeGPUOpt << "(" << chronoTimeGPUOp << " us by chrono) ms" << std::endl;
+	std::cout << std::setw(20) << std::left << "CPU time "			 << chronoTimeCPU   << " us" << std::endl;
+	std::cout << std::setw(20) << std::left << "GPU time "			 << chronoTimeGPU   << " us" << std::endl;
+	std::cout << std::setw(20) << std::left << "GPU optimized time " << chronoTimeGPUOp << " us" << std::endl;
 
 	/*
 	 * Memory free
